@@ -127,17 +127,7 @@ print(f"\n✓ Train/Test split (70/30):")
 print(f"  - Training set: {len(train_labels):,} cases")
 print(f"  - Test set: {len(test_labels):,} cases")
 
-# ── 6. TRAIN XGBOOST WITH CLASS WEIGHTS ──────────────────────────────────
-
-# Calculate class weights to handle imbalance
-n_negative = (train_labels == 0).sum()
-n_positive = (train_labels == 1).sum()
-scale_pos_weight = n_negative / n_positive
-
-print(f"\nClass imbalance handling:")
-print(f"  - Negative (0): {n_negative:,}")
-print(f"  - Positive (1): {n_positive:,}")
-print(f"  - Scale pos weight: {scale_pos_weight:.2f}")
+# ── 6. TRAIN XGBOOST ──────────────────────────────────
 
 dtrain = xgb.DMatrix(train_data, label=train_labels)
 dtest = xgb.DMatrix(test_data, label=test_labels)
@@ -147,9 +137,8 @@ params = {
     'learning_rate': 0.1,
     'objective': 'binary:logistic',
     'eval_metric': 'auc',
-    'scale_pos_weight': scale_pos_weight,
-    'subsample': 0.8,
-    'colsample_bytree': 0.8
+    'subsample': 0.6,
+    'colsample_bytree': 0.6
 }
 
 watchlist = [(dtrain, 'train'), (dtest, 'test')]
