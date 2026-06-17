@@ -1,0 +1,94 @@
+======================================================================
+SNAP ERROR RATE MODEL - TRAINING
+======================================================================
+
+Data: 3,658 cases, 57 columns
+most feature engineering already done and provided in source data
+One-hot encoding complete: 45 total features
+   error_target  case_ern_incm_amt  ...  max_educ_4  max_educ_99
+0             1            3464.74  ...       False         True
+1             0            1545.74  ...       False         True
+2             1               0.00  ...       False         True
+3             1                NaN  ...       False        False
+4             1               0.00  ...       False        False
+
+[5 rows x 45 columns]
+[[0.0 1245.0 0.0 ... False False False]
+ [0.0 914.0 0.0 ... True False False]
+ [0.0 3079.2 0.0 ... True False False]
+ ...
+ [0.0 1507.98 0.0 ... False False True]
+ [0.0 0.0 800.0 ... True False False]
+ [2064.0 0.0 0.0 ... False False True]]
+['case_ern_incm_amt', 'case_uern_incm_amt', 'case_slf_ern_incm_amt', 'unit_disable', 'unit_children', 'is_married', 'is_old', 'case_nonenglish', 'med_age', 'family_size', 'dss_tenure', 'tot_shl_cost_amt', 'homeless_allow_amt', 'med_exp_amt', 'bas_utl_allow_amt', 'chld_sup_exp_amt', 'aboveavg_uern_fips', 'aboveavg_ern_fips', 'aboveavg_shl_fips', 'move_flag', 'Issuance', 'caseload', 'total_income', 'round_income', 'round_income_un', 'share_rent', 'flag_inchh', 'inc_cap', 'share_issuance', 'caseload_cap', 'group_region_1', 'group_region_2', 'group_region_3', 'group_region_4', 'group_region_5', 'grouprace_1', 'grouprace_2', 'grouprace_3', 'grouprace_4', 'max_educ_1', 'max_educ_2', 'max_educ_4', 'max_educ_99']
+Total samples: 3,658
+
+✓ Train/Test split (70/30):
+  - Training set: 2,561 cases
+  - Test set: 1,097 cases
+✓ XGBoost model trained (8 rounds)
+
+======================================================================
+MODEL PERFORMANCE METRICS
+======================================================================
+Sensitivity (Catch errors):   54.46%  (catches 54% of actual errors)
+Specificity (Clear valid):    76.98%  (correctly clears 77%)
+Precision (True errors/flag): 59.01%  (59% of flagged are true errors)
+AUC-ROC:                      0.7417
+
+Confusion Matrix:
+                          Predicted=0  Predicted=1
+Actual=0 (no error)         525          157
+Actual=1 (error)            189          226
+
+======================================================================
+ERROR DOLLAR ANALYSIS (Test Set)
+======================================================================
+
+✗ FALSE NEGATIVES (Missed errors):
+    Cases:              189
+    Avg error per case: $122.63
+    Total error missed: $23,178
+
+⚠ FALSE POSITIVES (False alarms):
+    Cases:              157
+    Avg error per case: $0.00
+
+✓ TRUE NEGATIVES (Correctly cleared):
+    Cases:              525
+
+✓ TRUE POSITIVES (Correctly caught errors):
+    Cases:              226
+    Avg error per case: $50.56
+    Total error caught: $11,426
+
+======================================================================
+OPERATIONAL IMPACT
+======================================================================
+
+Total test set cases:               1,097
+Total error in test set:            $34,604
+
+Cases flagged for review (>50%):   383 (34.9%)
+Error captured by flagging:         $11,426 (33.0%)
+Error missed (not flagged):         $23,178 (67.0%)
+Expected error per case reviewed:   $29.83
+
+======================================================================
+THRESHOLD ANALYSIS
+======================================================================
+
+Threshold  Cases Flagged  % of Test Set   Est. Error Captured
+-----------------------------------------------------------------
+  30%           688            62.7%            75.0%
+  40%           608            55.4%            58.6%
+  50%           383            34.9%            33.0%
+  60%            31             2.8%             3.6%
+  70%             0             0.0%             0.0%
+
+======================================================================
+
+✓ ROC curve saved to: /Users/haejin/github-repos/SNAP/roc_curve.png
+✓ Histogram saved to: /Users/haejin/github-repos/SNAP/probability_histogram.png
+
+✓ Training complete!
