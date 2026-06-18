@@ -3,71 +3,77 @@ SNAP ERROR RATE MODEL - TRAINING
 ======================================================================
 
 Data: 3,658 cases, 57 columns
-One-hot encoding complete: 44 total features
+One-hot encoding complete: 45 total features
 Total samples: 3,658
 
  Train/Test split (70/30):
   - Training set: 2,561 cases
   - Test set: 1,097 cases
- XGBoost model trained (50 rounds)
+ XGBoost model trained (13 rounds)
 
 ======================================================================
 MODEL PERFORMANCE METRICS
 ======================================================================
-Sensitivity :   58.55%  (catches 59% of actual errors)
-Specificity :    75.81%  (correctly clears 76%)
-Precision (needs more focus): 59.56%  (60% of flagged are true errors)
-AUC-ROC:                      0.7418
+Sensitivity :   59.76%  (catches 60% of actual errors)
+Specificity :    75.22%  (correctly clears 75%)
+Precision (needs more focus): 59.47%  (59% of flagged are true errors)
+AUC-ROC:                      0.7466
 
 Confusion Matrix:
                           Predicted=0 (no error)  Predicted=1 (error)
-Actual=0 (no error)         517          165
-Actual=1 (error)            172          243
+Actual=0 (no error)         513          169
+Actual=1 (error)            167          248
 
 ======================================================================
-ERROR DOLLAR ANALYSIS (Test Set)
+ERROR DOLLAR ANALYSIS (Test Set) - FNS tolerance = $56
 ======================================================================
 
  FALSE NEGATIVES (Missed errors):
-    Cases:              172
-    Avg error per case: $124.76
-    Total error missed: $21,458
+    Cases:              167
+    Avg error per case: $125.66
+    Total error missed (raw): $20,985
+    Countable error missed (for FNS): $18,999
 
  FALSE POSITIVES (False alarms):
-    Cases:              165
+    Cases:              169
     Avg error per case: $0.00
 
  TRUE NEGATIVES :
-    Cases:              517
+    Cases:              513
 
  TRUE POSITIVES (Correctly caught errors):
-    Cases:              243
-    Avg error per case: $54.10
-    Total error caught: $13,146
+    Cases:              248
+    Avg error per case: $54.92
+    Total error caught (raw): $13,619
+    Countable error caught (for FNS): $9,437
 
 ======================================================================
-OPERATIONAL IMPACT >> ADD BELOW-THRESHOLD ANALYSIS
+OPERATIONAL IMPACT given FNS tolerance = $56
 ======================================================================
 
 Total test set cases:               1,097
 Total error in test set:            $34,604
+Total countable error in test set: $28,436
 
-Cases flagged for review (>50%):   408 (37.2%)
-Error captured by flagging:         $13,146 (38.0%)
-Error missed (not flagged):         $21,458 (62.0%)
-Expected error per case reviewed:   $32.22
+Cases flagged for review (>50%):   417 (38.0%)
+Error captured by flagging:         $13,619 (39.4%)
+Error captured (for FNS):          $9,437 (33.2%)
+Error missed (not flagged):         $20,985 (60.6%)
+Error missed (not flagged, for FNS): $18,999 (66.8%)
+Expected error per case reviewed:   $32.66
+Expected countable error per case reviewed (for FNS):   $22.63
 
 ======================================================================
-THRESHOLD ANALYSIS >> ADD BELOW-THRESHOLD ANALYSIS
+THRESHOLD ANALYSIS (FNS-countable = errors > $56)
 ======================================================================
 
-Threshold  Cases Flagged  % of Test Set   Est. Error Captured
------------------------------------------------------------------
-  30%           648            59.1%            63.1%
-  40%           539            49.1%            52.1%
-  50%           408            37.2%            38.0%
-  60%           255            23.2%            23.3%
-  70%            84             7.7%             6.7%
+ Thresh   Flagged  % Test   Captured (raw)   Captured (FNS)   % FNS Cap   Missed (FNS)
+------------------------------------------------------------------------------------------
+  30%         668     60.9%    $      24,152    $      18,537       65.2%    $      9,899
+  40%         576     52.5%    $      19,755    $      14,553       51.2%    $     13,883
+  50%         417     38.0%    $      13,619    $       9,437       33.2%    $     18,999 <--
+  60%         212     19.3%    $       6,837    $       4,627       16.3%    $     23,809
+  70%          48      4.4%    $       1,898    $       1,418        5.0%    $     27,018
 
 ======================================================================
 
