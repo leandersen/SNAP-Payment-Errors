@@ -1,9 +1,9 @@
 """
-SNAP ERROR RATE MODEL
+SNAP Data - Xgboost model to predict error case and expected error $ per case
 """
-# 1. converted to this python code
-# 2. commented out the columns in feature engineer section; row 43-74 and included them into `cols_to_select`
-# 3. added class weights for imbalanced classes in section #6
+# Converted from R (VDSS model) to Python and did code sanity check with AI support
+# Feature engineer section is commented out as .csv dataset includes them already
+# Imbalance strategy = L1 regularization & randomness by subsampling and column sampling 
 
 import pandas as pd
 import numpy as np
@@ -66,14 +66,15 @@ mydata = mydata[cols_to_select].copy()
 #mydata['inc_cap'] = mydata['total_income'] / mydata['family_size']
 mydata['caseload_cap'] = mydata['caseload'] / (mydata['dss_tenure'] + 1)
 
+# drop the raw caseload column since caseload_cap captures it
+mydata = mydata.drop(columns=['caseload'])
+
 #snap_benefits = {
 #    1: 298, 2: 546, 3: 785, 4: 994, 5: 1183,
 #    6: 1421, 7: 1571, 8: 1789
 #}
 #mydata['max_snap'] = mydata['family_size'].map(snap_benefits)
 #mydata['share_issuance'] = mydata['Issuance'] / mydata['max_snap']
-
-print("most feature engineering already done and provided in source data")
 
 # ── 3. ENCODE CATEGORICALS ──────────────────────────────────
 
@@ -93,21 +94,25 @@ mydata = mydata.drop(columns=['group_region', 'grouprace', 'max_educ', 'max_snap
 mydata = pd.concat([mydata, region_ohe, race_ohe, educ_ohe], axis=1)
 
 print(f"One-hot encoding complete: {mydata.shape[1]} total features")
-print(mydata.head())
 
 # ── 4. SPLIT TARGET / FEATURES ──────────────────────────────
 
-np.random.seed(1234)
-mydata = mydata.sample(frac=1, random_state=1234).reset_index(drop=True) # shuffle (reordering)
-# no under sampling or over sampling in this script?
+# sets the seed for random number generator
+np.random.seed(1234) 
+# shuffle (reordering) to ensure the training/test split is random
+mydata = mydata.sample(frac=1, random_state=1234).reset_index(drop=True) 
 
 target = mydata['error_target'].values
-error_dollars = mydata['Error'].values # preserve dollar errors for later
+error_dollars = mydata['Error'].values # will use this for total error or missed error in dollar terms
 
-feature_matrix = mydata.drop(columns=['error_target', 'Error']).values
-feature_cols = mydata.drop(columns=['error_target', 'Error']).columns.tolist()
-print(feature_matrix)
-print(feature_cols)
+# converting all columns except error_target and Error to 2d numpy array
+# and saving the column names as a list
+feature_df = mydata.drop(columns=['error_target', 'Error'])
+feature_matrix = feature_df.values
+feature_cols = feature_df.columns.tolist() 
+
+#print(feature_matrix)
+#print(feature_cols)
 
 # ── 5. TRAIN / TEST SPLIT (70 / 30) ─────────────────────────
 
@@ -123,7 +128,7 @@ test_data = feature_matrix[n_train:]
 test_labels = target[n_train:]
 test_errors = error_dollars[n_train:] # dollar errors aligned to test set
 
-print(f"\n✓ Train/Test split (70/30):")
+print(f"\n Train/Test split (70/30):")
 print(f"  - Training set: {len(train_labels):,} cases")
 print(f"  - Test set: {len(test_labels):,} cases")
 
@@ -133,30 +138,32 @@ dtrain = xgb.DMatrix(train_data, label=train_labels)
 dtest = xgb.DMatrix(test_data, label=test_labels)
 
 params = {
-    'max_depth': 5,
+    'max_depth': 5, 
     'learning_rate': 0.1,
-    'objective': 'binary:logistic',
-    'eval_metric': 'auc',
-    'subsample': 0.6,
-    'colsample_bytree': 0.6
+    'objective': 'binary:logistic', # error vs no error
+    'eval_metric': 'auc', # measures how well the model ranks error above no-error across all thresholds
+    'subsample': 0.6, # random 60% of training rows; scaled up from 0.8 to give more randomness and more defense against overfitting
+    'colsample_bytree': 0.6 # random 60% of columns (features) for splitting; scaled up from 0.8 for more randomness
 }
 
 watchlist = [(dtrain, 'train'), (dtest, 'test')]
 
-# mirror the original R script; lower complexity, smaller learning rate, L1 regularization
+# max_depth = 4 is simpler trees than the original `params`
+# lower complexity with eta = 0.05; slower learning
+# alpha = 1 means L1 regularization to shrink weak features to zero
 train_params = params.copy()
 train_params.update({'max_depth': 4, 'eta': 0.05, 'alpha': 1})
 
 model = xgb.train(
     train_params,
     dtrain,
-    num_boost_round=200,
-    evals=watchlist,
-    early_stopping_rounds=10,
-    verbose_eval=False
+    num_boost_round=100, # max number of trees to build
+    evals=watchlist, # datasets to score after each round
+    early_stopping_rounds=50, # stop if no improvements for 50 rounds
+    verbose_eval=False,  # suppresses per-round print output
 )
 
-print(f"✓ XGBoost model trained ({model.best_iteration} rounds)")
+print(f" XGBoost model trained ({model.best_iteration} rounds)")
 
 # ── 6. EVALUATE ─────────────────────────────────────────────
 
@@ -168,6 +175,7 @@ fpr, tpr, _ = roc_curve(test_labels, pred)
 auc_value = auc(fpr, tpr)
 
 # Calculate metrics
+# VDSS only review about 6,700 cases per month, so focus more on precision.
 tn, fp, fn, tp_count = cm.ravel()
 sensitivity = tp_count / (tp_count + fn) if (tp_count + fn) > 0 else 0
 specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
@@ -176,13 +184,13 @@ precision = tp_count / (tp_count + fp) if (tp_count + fp) > 0 else 0
 print(f"\n{'='*70}")
 print("MODEL PERFORMANCE METRICS")
 print(f"{'='*70}")
-print(f"Sensitivity (Catch errors):   {sensitivity:.2%}  (catches {sensitivity:.0%} of actual errors)")
-print(f"Specificity (Clear valid):    {specificity:.2%}  (correctly clears {specificity:.0%})")
-print(f"Precision (True errors/flag): {precision:.2%}  ({precision:.0%} of flagged are true errors)")
+print(f"Sensitivity :   {sensitivity:.2%}  (catches {sensitivity:.0%} of actual errors)")
+print(f"Specificity :    {specificity:.2%}  (correctly clears {specificity:.0%})")
+print(f"Precision (needs more focus): {precision:.2%}  ({precision:.0%} of flagged are true errors)")
 print(f"AUC-ROC:                      {auc_value:.4f}")
 
 print(f"\nConfusion Matrix:")
-print(f"{'':25s} Predicted=0  Predicted=1")
+print(f"{'':25s} Predicted=0 (no error)  Predicted=1 (error)")
 print(f"Actual=0 (no error)      {tn:6d}       {fp:6d}")
 print(f"Actual=1 (error)         {fn:6d}       {tp_count:6d}")
 
@@ -224,31 +232,32 @@ for _, row in outcome_summary.iterrows():
     total_err = row['total_error']
     
     if outcome == "True Positive":
-        print(f"\n✓ TRUE POSITIVES (Correctly caught errors):")
+        print(f"\n TRUE POSITIVES (Correctly caught errors):")
         print(f"    Cases:              {n_cases:,}")
         print(f"    Avg error per case: ${mean_err:,.2f}")
         print(f"    Total error caught: ${total_err:,.0f}")
     elif outcome == "False Positive":
-        print(f"\n⚠ FALSE POSITIVES (False alarms):")
+        print(f"\n FALSE POSITIVES (False alarms):")
         print(f"    Cases:              {n_cases:,}")
         print(f"    Avg error per case: ${mean_err:,.2f}")
     elif outcome == "False Negative":
-        print(f"\n✗ FALSE NEGATIVES (Missed errors):")
+        print(f"\n FALSE NEGATIVES (Missed errors):")
         print(f"    Cases:              {n_cases:,}")
         print(f"    Avg error per case: ${mean_err:,.2f}")
         print(f"    Total error missed: ${total_err:,.0f}")
     else:
-        print(f"\n✓ TRUE NEGATIVES (Correctly cleared):")
+        print(f"\n TRUE NEGATIVES :")
         print(f"    Cases:              {n_cases:,}")
 
 # Summary stats
+# TO DO: explicitly treat below-threshold cases as predicted non-error, aka non-target
 total_error = np.sum(np.abs(results['error_dollars']))
 flagged_error = np.sum(np.abs(results[results['pred_flag'] == 1]['error_dollars']))
 missed_error = np.sum(np.abs(results[results['pred_flag'] == 0]['error_dollars']))
 n_flagged = np.sum(pred_class)
 
 print(f"\n{'='*70}")
-print("OPERATIONAL IMPACT")
+print("OPERATIONAL IMPACT >> ADD BELOW-THRESHOLD ANALYSIS")
 print(f"{'='*70}")
 print(f"\nTotal test set cases:               {len(test_labels):,}")
 print(f"Total error in test set:            ${total_error:,.0f}")
@@ -262,7 +271,7 @@ if n_flagged > 0:
 # Threshold analysis
 thresholds = [0.30, 0.40, 0.50, 0.60, 0.70]
 print(f"\n{'='*70}")
-print("THRESHOLD ANALYSIS")
+print("THRESHOLD ANALYSIS >> ADD BELOW-THRESHOLD ANALYSIS")
 print(f"{'='*70}")
 print(f"\nThreshold  Cases Flagged  % of Test Set   Est. Error Captured")
 print(f"-" * 65)
@@ -274,32 +283,3 @@ for t in thresholds:
     print(f"  {t:.0%}        {n:6,}          {pct:6.1f}%          {pct_captured:6.1f}%")
 
 print(f"\n{'='*70}\n")
-
-# Plot ROC curve
-plt.figure(figsize=(8, 6))
-plt.plot(fpr, tpr, color='blue', lw=2, label=f'ROC (AUC = {auc_value:.4f})')
-plt.plot([0, 1], [0, 1], color='gray', lw=1, linestyle='--')
-plt.xlabel('False Positive Rate')
-plt.ylabel('True Positive Rate')
-plt.title('ROC Curve for SNAP Error Detection Model')
-plt.legend(loc='lower right')
-plt.grid(alpha=0.3)
-plt.savefig('/Users/haejin/github-repos/SNAP/roc_curve.png', dpi=300, bbox_inches='tight')
-plt.close()
-print("✓ ROC curve saved to: /Users/haejin/github-repos/SNAP/roc_curve.png")
-
-# Probability histogram
-plt.figure(figsize=(10, 6))
-plt.hist(pred[pred > 0.5], bins=30, color='steelblue', edgecolor='white')
-plt.xlabel('Predicted Probability')
-plt.ylabel('Frequency')
-plt.title('Predicted Error Probability Distribution (> 50%)')
-plt.axvline(0.60, linestyle='--', color='darkred', alpha=0.7, label='60%')
-plt.axvline(0.70, linestyle='--', color='darkred', alpha=0.7, label='70%')
-plt.legend()
-plt.grid(alpha=0.3, axis='y')
-plt.savefig('/Users/haejin/github-repos/SNAP/probability_histogram.png', dpi=300, bbox_inches='tight')
-plt.close()
-print("✓ Histogram saved to: /Users/haejin/github-repos/SNAP/probability_histogram.png")
-
-print("\n✓ Training complete!")
