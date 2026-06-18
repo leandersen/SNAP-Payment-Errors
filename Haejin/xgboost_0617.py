@@ -4,6 +4,7 @@ SNAP Data - Xgboost model to predict error case and expected error $ per case
 # Converted from R (VDSS model) to Python and did code sanity check with AI support
 # Feature engineer section is commented out as .csv dataset includes them already
 # Imbalance strategy = L1 regularization & randomness by subsampling and column sampling 
+# Added FNS FY24 QC tolerance threshold $56 to treat cases below the threshold amount as non-targets
 
 import pandas as pd
 import numpy as np
@@ -76,21 +77,14 @@ mydata = mydata.drop(columns=['caseload'])
 #mydata['max_snap'] = mydata['family_size'].map(snap_benefits)
 #mydata['share_issuance'] = mydata['Issuance'] / mydata['max_snap']
 
-# ── 3. ENCODE CATEGORICALS ──────────────────────────────────
-
-#factor_vars <- c(
-#  "group_region", "grouprace", "is_married", "is_old",
-#  "case_nonenglish", "max_educ", "move_flag",
-#  "aboveavg_ern_fips", "aboveavg_uern_fips", "aboveavg_shl_fips"
-#)
-#mydata[factor_vars] <- lapply(mydata[factor_vars], as.factor)
+# ── 3. CREATE ONE-HOT ENCODINGS ──────────────────────────────────
 
 # One-hot encode multi-level factors; binary factors stay as 0/1 numeric
 region_ohe = pd.get_dummies(mydata['group_region'], prefix='group_region')
 race_ohe = pd.get_dummies(mydata['grouprace'], prefix='grouprace')
 educ_ohe = pd.get_dummies(mydata['max_educ'], prefix='max_educ')
 
-mydata = mydata.drop(columns=['group_region', 'grouprace', 'max_educ', 'max_snap'])
+mydata = mydata.drop(columns=['group_region', 'grouprace', 'max_educ'])
 mydata = pd.concat([mydata, region_ohe, race_ohe, educ_ohe], axis=1)
 
 print(f"One-hot encoding complete: {mydata.shape[1]} total features")
@@ -165,7 +159,7 @@ model = xgb.train(
 
 print(f" XGBoost model trained ({model.best_iteration} rounds)")
 
-# ── 6. EVALUATE ─────────────────────────────────────────────
+# ── 7. EVALUATE ─────────────────────────────────────────────
 
 pred = model.predict(dtest)
 pred_class = (pred > 0.5).astype(int)
@@ -174,8 +168,8 @@ cm = confusion_matrix(test_labels, pred_class)
 fpr, tpr, _ = roc_curve(test_labels, pred)
 auc_value = auc(fpr, tpr)
 
-# Calculate metrics
 # VDSS only review about 6,700 cases per month, so focus more on precision.
+# Calculate metrics
 tn, fp, fn, tp_count = cm.ravel()
 sensitivity = tp_count / (tp_count + fn) if (tp_count + fn) > 0 else 0
 specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
@@ -196,12 +190,23 @@ print(f"Actual=1 (error)         {fn:6d}       {tp_count:6d}")
 
 # ── 7. ERROR DOLLAR ANALYSIS ────────────────────────────────
 
+# FNS QC tolerance threshold so below $56 are not considered errors by FNS
+# source: https://fna-bwbufwdzbabpezgc.z01.azurefd.us/sites/default/files/resource-files/snap-fy24QC-PER.pdf
+fns_qc_threshold = 56
+
 results = pd.DataFrame({
     'actual_error_flag': test_labels,
     'pred_flag': pred_class,
     'pred_prob': pred,
     'error_dollars': test_errors
 })
+
+# new column countable_error: dollar amount FNS would count (zero if abs(error) <= $56)
+results['countable_error'] = np.where(
+    np.abs(results['error_dollars']) > fns_qc_threshold,
+    results['error_dollars'],
+    0
+)
 
 def classify_outcome(row):
     if row['actual_error_flag'] == 1 and row['pred_flag'] == 1:
@@ -215,14 +220,15 @@ def classify_outcome(row):
 
 results['outcome'] = results.apply(classify_outcome, axis=1)
 
-outcome_summary = results.groupby('outcome').agg({
-    'error_dollars': ['count', 'mean', 'sum']
-}).round(2)
-outcome_summary.columns = ['n_cases', 'mean_error', 'total_error']
-outcome_summary = outcome_summary.reset_index()
+outcome_summary = results.groupby('outcome').agg(
+    n_cases        = ('error_dollars',   'count'),
+    mean_error     = ('error_dollars',   'mean'),
+    total_error    = ('error_dollars',   'sum'),
+    countable_error= ('countable_error', 'sum'),
+).round(2).reset_index()
 
 print(f"\n{'='*70}")
-print("ERROR DOLLAR ANALYSIS (Test Set)")
+print("ERROR DOLLAR ANALYSIS (Test Set) - FNS tolerance = $56")
 print(f"{'='*70}")
 
 for _, row in outcome_summary.iterrows():
@@ -230,12 +236,14 @@ for _, row in outcome_summary.iterrows():
     n_cases = int(row['n_cases'])
     mean_err = row['mean_error']
     total_err = row['total_error']
-    
+    countable_err = row['countable_error']
+
     if outcome == "True Positive":
         print(f"\n TRUE POSITIVES (Correctly caught errors):")
         print(f"    Cases:              {n_cases:,}")
         print(f"    Avg error per case: ${mean_err:,.2f}")
-        print(f"    Total error caught: ${total_err:,.0f}")
+        print(f"    Total error caught (raw): ${total_err:,.0f}" )
+        print(f"    Countable error caught (for FNS): ${countable_err:,.0f}")
     elif outcome == "False Positive":
         print(f"\n FALSE POSITIVES (False alarms):")
         print(f"    Cases:              {n_cases:,}")
@@ -244,42 +252,66 @@ for _, row in outcome_summary.iterrows():
         print(f"\n FALSE NEGATIVES (Missed errors):")
         print(f"    Cases:              {n_cases:,}")
         print(f"    Avg error per case: ${mean_err:,.2f}")
-        print(f"    Total error missed: ${total_err:,.0f}")
+        print(f"    Total error missed (raw): ${total_err:,.0f}")
+        print(f"    Countable error missed (for FNS): ${countable_err:,.0f}")
     else:
         print(f"\n TRUE NEGATIVES :")
         print(f"    Cases:              {n_cases:,}")
 
 # Summary stats
-# TO DO: explicitly treat below-threshold cases as predicted non-error, aka non-target
 total_error = np.sum(np.abs(results['error_dollars']))
-flagged_error = np.sum(np.abs(results[results['pred_flag'] == 1]['error_dollars']))
-missed_error = np.sum(np.abs(results[results['pred_flag'] == 0]['error_dollars']))
+total_error_fns = np.sum(np.abs(results['countable_error']))
+
 n_flagged = np.sum(pred_class)
+n_not_flagged = len(test_labels) - n_flagged
+
+flagged_error = np.sum(np.abs(results[results['pred_flag'] == 1]['error_dollars']))
+not_flagged_error = np.sum(np.abs(results[results['pred_flag'] == 0]['error_dollars']))
+
+flagged_error_fns = np.sum(np.abs(results[results['pred_flag'] == 1]['countable_error']))
+not_flagged_error_fns = np.sum(np.abs(results[results['pred_flag'] == 0]['countable_error']))
+
+true_missed_error_fns = np.sum(np.abs(results[(results['actual_error_flag'] == 1) & (results['pred_flag'] == 0)]['countable_error']))
 
 print(f"\n{'='*70}")
-print("OPERATIONAL IMPACT >> ADD BELOW-THRESHOLD ANALYSIS")
+print("OPERATIONAL IMPACT given FNS tolerance = $56")
 print(f"{'='*70}")
 print(f"\nTotal test set cases:               {len(test_labels):,}")
 print(f"Total error in test set:            ${total_error:,.0f}")
+print(f"Total countable error in test set: ${total_error_fns:,.0f}")
+
 print(f"\nCases flagged for review (>50%):   {n_flagged:,} ({100*n_flagged/len(test_labels):.1f}%)")
 print(f"Error captured by flagging:         ${flagged_error:,.0f} ({100*flagged_error/total_error:.1f}%)")
-print(f"Error missed (not flagged):         ${missed_error:,.0f} ({100*missed_error/total_error:.1f}%)")
+print(f"Error captured (for FNS):          ${flagged_error_fns:,.0f} ({100*flagged_error_fns/total_error_fns:.1f}%)")
+
+print(f"Error missed (not flagged):         ${not_flagged_error:,.0f} ({100*not_flagged_error/total_error:.1f}%)")
+print(f"Error missed (not flagged, for FNS): ${not_flagged_error_fns:,.0f} ({100*not_flagged_error_fns/total_error_fns:.1f}%)")
 
 if n_flagged > 0:
     print(f"Expected error per case reviewed:   ${flagged_error/n_flagged:,.2f}")
+    print(f"Expected countable error per case reviewed (for FNS):   ${flagged_error_fns/n_flagged:,.2f}")
 
 # Threshold analysis
 thresholds = [0.30, 0.40, 0.50, 0.60, 0.70]
+
 print(f"\n{'='*70}")
-print("THRESHOLD ANALYSIS >> ADD BELOW-THRESHOLD ANALYSIS")
+print(f"THRESHOLD ANALYSIS (FNS-countable = errors > $56)")
 print(f"{'='*70}")
-print(f"\nThreshold  Cases Flagged  % of Test Set   Est. Error Captured")
-print(f"-" * 65)
+print(f"\n{'Thresh':>7}  {'Flagged':>8}  {'% Test':>6}  {'Captured (raw)':>15}  {'Captured (FNS)':>15}  {'% FNS Cap':>10}  {'Missed (FNS)':>13}")
+print("-" * 90)
+
 for t in thresholds:
-    n = np.sum(pred >= t)
-    pct = 100 * n / len(pred)
-    captured = np.sum(np.abs(results[results['pred_prob'] >= t]['error_dollars']))
-    pct_captured = 100 * captured / total_error if total_error > 0 else 0
-    print(f"  {t:.0%}        {n:6,}          {pct:6.1f}%          {pct_captured:6.1f}%")
+    flagged_t     = pred >= t
+    not_flagged_t = ~flagged_t
+
+    n_t               = int(flagged_t.sum())
+    pct_t             = 100 * n_t / len(pred)
+    captured_raw_t    = np.sum(np.abs(results.loc[flagged_t,     'error_dollars']))
+    captured_fns_t    = np.sum(np.abs(results.loc[flagged_t,     'countable_error']))
+    missed_fns_t      = np.sum(np.abs(results.loc[not_flagged_t, 'countable_error']))
+    pct_captured_fns  = 100 * captured_fns_t / total_error_fns if total_error_fns > 0 else 0
+
+    marker = " <--" if t == 0.50 else ""
+    print(f"  {t:.0%}      {n_t:6,}    {pct_t:5.1f}%    ${captured_raw_t:>12,.0f}    ${captured_fns_t:>12,.0f}      {pct_captured_fns:5.1f}%    ${missed_fns_t:>11,.0f}{marker}")
 
 print(f"\n{'='*70}\n")
