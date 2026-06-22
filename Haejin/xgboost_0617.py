@@ -22,7 +22,7 @@ print("="*70)
 
 # ── 1. LOAD DATA ────────────────────────────────────
 
-mydata = pd.read_csv("~/github-repos/SNAP/Data_UVA_SNAProject.csv")
+mydata = pd.read_csv("/Users/landy/Documents/MSDS/Capstone/Data_UVA_SNAProject.csv")
 print(f"\nData: {mydata.shape[0]:,} cases, {mydata.shape[1]} columns")
 
 # ── 2. SELECT & ENGINEER FEATURES ───────────────────────────
